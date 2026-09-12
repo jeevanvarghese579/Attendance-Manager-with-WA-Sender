@@ -1,17 +1,19 @@
 // Firestore repository — the online persistence layer.
-// All data is scoped under users/{uid}/... and every write is awaited.
+// All data is scoped under attendanceManagerUsers/{uid}/.... Online writes are
+// awaited; offline writes are queued in Firestore's persistent IndexedDB cache.
 // We never trust a stored UID — it always comes from the authenticated user.
 // Batches are used for atomic multi-record writes (replace/restore).
 
 import {
-  collection, doc, getDocs, setDoc, deleteDoc, writeBatch,
-  query, where, onSnapshot,
+  collection, doc, getDocs, getDocsFromCache, setDoc, writeBatch,
+  query, where,
 } from 'firebase/firestore'
-import { db } from '@/services/firebase/config'
+import { db, isFirestoreNetworkEnabled } from '@/services/firebase/config'
+import { trackFirestoreWrite } from '@/services/firebase/sync'
 import { uid as genId } from '@/utils/ids'
 import { logError } from '@/utils/logger'
 
-const ROOT = (uid) => `users/${uid}`
+const ROOT = (uid) => `attendanceManagerUsers/${uid}`
 
 function colRef(uid, name) {
   return collection(db, `${ROOT(uid)}/${name}`)
@@ -30,49 +32,54 @@ function clean(o) {
 }
 
 async function list(uid, name) {
-  const snap = await getDocs(colRef(uid, name))
+  console.debug('[Attendance Data] Opening protected Firestore path.', { uid, path: `${ROOT(uid)}/${name}` })
+  const snap = await readDocs(colRef(uid, name))
   return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+}
+
+function readDocs(reference) {
+  return isFirestoreNetworkEnabled() ? getDocs(reference) : getDocsFromCache(reference)
 }
 
 export const onlineRepo = {
   async listClasses(uid) { return list(uid, 'classes') },
 
   async putClass(uid, c) {
-    const rec = clean({ ...c })
+    const rec = clean({ ...c, updatedAt: new Date().toISOString() })
     if (!rec.id) rec.id = genId()
-    await setDoc(docRef(uid, 'classes', rec.id), rec, { merge: true })
+    await trackFirestoreWrite(setDoc(docRef(uid, 'classes', rec.id), rec, { merge: true }))
     return rec
   },
 
   async deleteClass(uid, id) {
     // Cascade delete students + attendance under this class.
-    const students = await getDocs(query(colRef(uid, 'students'), where('classId', '==', id)))
+    const students = await readDocs(query(colRef(uid, 'students'), where('classId', '==', id)))
     const studentIds = students.docs.map(s => s.id)
     const batch = writeBatch(db)
     batch.delete(docRef(uid, 'classes', id))
     students.docs.forEach(s => batch.delete(docRef(uid, 'students', s.id)))
     if (studentIds.length) {
-      const att = await getDocs(query(colRef(uid, 'attendance'), where('classId', '==', id)))
+      const att = await readDocs(query(colRef(uid, 'attendance'), where('classId', '==', id)))
       att.docs.forEach(a => batch.delete(docRef(uid, 'attendance', a.id)))
     }
-    await batch.commit()
+    await trackFirestoreWrite(batch.commit())
   },
 
   async listStudents(uid, classId) {
     if (!classId) return list(uid, 'students')
-    const snap = await getDocs(query(colRef(uid, 'students'), where('classId', '==', classId)))
+    const snap = await readDocs(query(colRef(uid, 'students'), where('classId', '==', classId)))
     return snap.docs.map(d => ({ id: d.id, ...d.data() }))
   },
 
   async putStudent(uid, s) {
-    const rec = clean({ ...s })
+    const rec = clean({ ...s, updatedAt: new Date().toISOString() })
     if (!rec.id) rec.id = genId()
-    await setDoc(docRef(uid, 'students', rec.id), rec, { merge: true })
+    await trackFirestoreWrite(setDoc(docRef(uid, 'students', rec.id), rec, { merge: true }))
     return rec
   },
 
   async bulkUpdateStudentRollNumbers(uid, { classId, updates }) {
-    const snapshot = await getDocs(query(colRef(uid, 'students'), where('classId', '==', classId)))
+    const snapshot = await readDocs(query(colRef(uid, 'students'), where('classId', '==', classId)))
     const byId = new Map(snapshot.docs.map(d => [d.id, { id: d.id, ...d.data() }]))
     const nextRollById = new Map(updates.map(u => [u.studentId, String(u.rollNumber).trim()]))
     const seen = new Set()
@@ -88,21 +95,21 @@ export const onlineRepo = {
     const batch = writeBatch(db)
     updates.forEach(({ studentId, rollNumber }) => {
       if (!byId.has(studentId)) throw new Error('A student in this update no longer exists in the selected class.')
-      batch.set(docRef(uid, 'students', studentId), { rollNumber: String(rollNumber).trim() }, { merge: true })
+      batch.set(docRef(uid, 'students', studentId), { rollNumber: String(rollNumber).trim(), updatedAt: new Date().toISOString() }, { merge: true })
     })
-    await batch.commit()
+    await trackFirestoreWrite(batch.commit())
   },
 
   async deleteStudent(uid, id) {
     const batch = writeBatch(db)
     batch.delete(docRef(uid, 'students', id))
-    const att = await getDocs(query(colRef(uid, 'attendance'), where('studentId', '==', id)))
+    const att = await readDocs(query(colRef(uid, 'attendance'), where('studentId', '==', id)))
     att.docs.forEach(a => batch.delete(docRef(uid, 'attendance', a.id)))
-    await batch.commit()
+    await trackFirestoreWrite(batch.commit())
   },
 
   async rollExists(uid, classId, rollNumber, exceptId = null) {
-    const snap = await getDocs(query(
+    const snap = await readDocs(query(
       colRef(uid, 'students'),
       where('classId', '==', classId),
       where('rollNumber', '==', rollNumber)
@@ -114,25 +121,25 @@ export const onlineRepo = {
   async listAttendance(uid) { return list(uid, 'attendance') },
 
   async attendanceForStudent(uid, studentId) {
-    const snap = await getDocs(query(colRef(uid, 'attendance'), where('studentId', '==', studentId)))
+    const snap = await readDocs(query(colRef(uid, 'attendance'), where('studentId', '==', studentId)))
     return snap.docs.map(d => ({ id: d.id, ...d.data() }))
   },
 
   async setStudentAttendance({ uid, studentId, classId, dates }) {
     // Delete existing attendance for student, then write new set, in a batch.
-    const existing = await getDocs(query(colRef(uid, 'attendance'), where('studentId', '==', studentId)))
+    const existing = await readDocs(query(colRef(uid, 'attendance'), where('studentId', '==', studentId)))
     const batch = writeBatch(db)
     existing.docs.forEach(d => batch.delete(docRef(uid, 'attendance', d.id)))
     dates.forEach(date => {
       const id = genId()
-      batch.set(docRef(uid, 'attendance', id), { id, studentId, classId, date })
+      batch.set(docRef(uid, 'attendance', id), { id, studentId, classId, date, updatedAt: new Date().toISOString() })
     })
-    await batch.commit()
+    await trackFirestoreWrite(batch.commit())
   },
 
   async setTodayAbsentees({ uid, classId, studentIds, date }) {
     // Replace attendance for this class on this date.
-    const existing = await getDocs(query(colRef(uid, 'attendance'), where('classId', '==', classId)))
+    const existing = await readDocs(query(colRef(uid, 'attendance'), where('classId', '==', classId)))
     const batch = writeBatch(db)
     existing.docs.forEach(d => {
       const data = d.data()
@@ -140,45 +147,45 @@ export const onlineRepo = {
     })
     studentIds.forEach(sid => {
       const id = genId()
-      batch.set(docRef(uid, 'attendance', id), { id, studentId: sid, classId, date })
+      batch.set(docRef(uid, 'attendance', id), { id, studentId: sid, classId, date, updatedAt: new Date().toISOString() })
     })
-    await batch.commit()
+    await trackFirestoreWrite(batch.commit())
   },
 
   async listHolidays(uid) { return list(uid, 'holidays') },
 
   async setHolidays(uid, dates) {
-    const existing = await getDocs(colRef(uid, 'holidays'))
+    const existing = await readDocs(colRef(uid, 'holidays'))
     const batch = writeBatch(db)
     existing.docs.forEach(d => batch.delete(docRef(uid, 'holidays', d.id)))
     dates.forEach(date => {
       const id = genId()
-      batch.set(docRef(uid, 'holidays', id), { id, date })
+      batch.set(docRef(uid, 'holidays', id), { id, date, updatedAt: new Date().toISOString() })
     })
-    await batch.commit()
+    await trackFirestoreWrite(batch.commit())
   },
 
   async listOverrides(uid) { return list(uid, 'holidayOverrides') },
 
   async setOverrides(uid, dates) {
-    const existing = await getDocs(colRef(uid, 'holidayOverrides'))
+    const existing = await readDocs(colRef(uid, 'holidayOverrides'))
     const batch = writeBatch(db)
     existing.docs.forEach(d => batch.delete(docRef(uid, 'holidayOverrides', d.id)))
     dates.forEach(date => {
       const id = genId()
-      batch.set(docRef(uid, 'holidayOverrides', id), { id, date })
+      batch.set(docRef(uid, 'holidayOverrides', id), { id, date, updatedAt: new Date().toISOString() })
     })
-    await batch.commit()
+    await trackFirestoreWrite(batch.commit())
   },
 
   async getSettings(uid) {
-    const snap = await getDocs(colRef(uid, 'settings'))
+    const snap = await readDocs(colRef(uid, 'settings'))
     const row = snap.docs.find(d => d.id === 'app')
     return row ? row.data().value : null
   },
 
   async putSettings(uid, settings) {
-    await setDoc(docRef(uid, 'settings', 'app'), { value: settings }, { merge: true })
+    await trackFirestoreWrite(setDoc(docRef(uid, 'settings', 'app'), { value: settings, updatedAt: new Date().toISOString() }, { merge: true }))
   },
 
   async replaceAll(uid, data) {
@@ -186,7 +193,7 @@ export const onlineRepo = {
     const collections = ['classes', 'students', 'attendance', 'holidays', 'holidayOverrides']
     const batch = writeBatch(db)
     for (const name of collections) {
-      const existing = await getDocs(colRef(uid, name))
+      const existing = await readDocs(colRef(uid, name))
       existing.docs.forEach(d => batch.delete(docRef(uid, name, d.id)))
     }
     for (const c of data.classes || []) batch.set(docRef(uid, 'classes', c.id), clean(c))
@@ -195,7 +202,7 @@ export const onlineRepo = {
     for (const h of data.holidays || []) batch.set(docRef(uid, 'holidays', h.id), clean(h))
     for (const o of data.holidayOverrides || []) batch.set(docRef(uid, 'holidayOverrides', o.id), clean(o))
     if (data.settings) batch.set(docRef(uid, 'settings', 'app'), { value: data.settings })
-    await batch.commit()
+    await trackFirestoreWrite(batch.commit())
   },
 
   async mergeAll(uid, data) {
@@ -206,7 +213,7 @@ export const onlineRepo = {
     for (const h of data.holidays || []) batch.set(docRef(uid, 'holidays', h.id), clean(h), { merge: true })
     for (const o of data.holidayOverrides || []) batch.set(docRef(uid, 'holidayOverrides', o.id), clean(o), { merge: true })
     if (data.settings) batch.set(docRef(uid, 'settings', 'app'), { value: data.settings }, { merge: true })
-    await batch.commit()
+    await trackFirestoreWrite(batch.commit())
   },
 }
 

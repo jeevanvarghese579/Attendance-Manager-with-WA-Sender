@@ -38,6 +38,7 @@ export function openDatabase() {
 // Device-local preferences live in the 'settings' store with fixed ids.
 export const PREF_DEFAULT_CLASS = 'defaultClass'
 export const PREF_THEME = 'theme'
+const AUTH_CACHE_PREFIX = 'authorizedAccess:'
 
 export async function getPref(key, fallback = null) {
   const row = await db.settings.get(key)
@@ -46,4 +47,20 @@ export async function getPref(key, fallback = null) {
 
 export async function setPref(key, value) {
   await db.settings.put({ id: key, value })
+}
+
+export async function getCachedAuthorization(uid, appId, email) {
+  await openDatabase()
+  const row = await db.settings.get(`${AUTH_CACHE_PREFIX}${uid}:${appId}`)
+  if (!row?.value?.allowed) return null
+  if ((row.value.email || '') !== (email?.trim().toLowerCase() || '')) return null
+  return row.value
+}
+
+export async function cacheAuthorization(uid, appId, email) {
+  await openDatabase()
+  await db.settings.put({
+    id: `${AUTH_CACHE_PREFIX}${uid}:${appId}`,
+    value: { allowed: true, uid, appId, email: email?.trim().toLowerCase() || '', checkedAt: new Date().toISOString() },
+  })
 }

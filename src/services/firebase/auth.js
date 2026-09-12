@@ -3,6 +3,12 @@
 
 import {
   signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithPopup,
+  sendPasswordResetEmail,
+  sendEmailVerification,
+  updateProfile,
   signOut,
   onAuthStateChanged,
   browserLocalPersistence,
@@ -45,6 +51,36 @@ export async function login(email, password) {
   await setPersistence(auth, browserLocalPersistence)
   const cred = await signInWithEmailAndPassword(auth, email, password)
   return cred.user
+}
+
+export async function signUp(email, password, displayName = '') {
+  if (!isFirebaseConfigured) throw new Error('Firebase is not configured.')
+  await setPersistence(auth, browserLocalPersistence)
+  const cred = await createUserWithEmailAndPassword(auth, email, password)
+  if (displayName.trim()) await updateProfile(cred.user, { displayName: displayName.trim() })
+  return cred.user
+}
+
+export async function loginWithGoogle() {
+  if (!isFirebaseConfigured) throw new Error('Firebase is not configured.')
+  await setPersistence(auth, browserLocalPersistence)
+  return (await signInWithPopup(auth, new GoogleAuthProvider())).user
+}
+
+export async function resetPassword(email) {
+  if (!isFirebaseConfigured) throw new Error('Firebase is not configured.')
+  await sendPasswordResetEmail(auth, email)
+}
+
+export async function sendCurrentUserVerification() {
+  if (!auth?.currentUser) throw new Error('Sign in before requesting email verification.')
+  await sendEmailVerification(auth.currentUser)
+}
+
+export async function refreshCurrentUser() {
+  if (!auth?.currentUser) return null
+  await auth.currentUser.reload()
+  return auth.currentUser
 }
 
 export async function logout() {

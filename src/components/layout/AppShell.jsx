@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import {
-  Menu, GraduationCap, Wifi, WifiOff, LogOut,
+  Menu, GraduationCap, Wifi, WifiOff, LogOut, Loader2, CheckCircle2, AlertTriangle,
   CalendarCheck, BookOpen, Users, CalendarDays, ClipboardList, Settings,
 } from 'lucide-react'
 import { useNav, PANELS } from '@/context/NavContext'
@@ -20,7 +20,7 @@ const NAV_ITEMS = [
 
 export default function AppShell({ children }) {
   const { panel, setPanel, drawerOpen, setDrawerOpen } = useNav()
-  const { mode, user, signOut } = useAuth()
+  const { mode, user, signOut, syncStatus } = useAuth()
   const { activeClass } = useData()
 
   const sidebar = (
@@ -40,6 +40,8 @@ export default function AppShell({ children }) {
           ? <><Wifi className="h-3.5 w-3.5 text-emerald-500" /><span className="truncate">Online · {user?.email}</span></>
           : <><WifiOff className="h-3.5 w-3.5 text-amber-500" /><span>Offline · this device</span></>}
       </div>
+
+      {mode === 'online' && <SyncBadge status={syncStatus} />}
 
       <nav className="flex-1 overflow-y-auto scrollbar-thin px-3 py-2">
         {NAV_ITEMS.map((item) => {
@@ -114,6 +116,23 @@ export default function AppShell({ children }) {
           <div className="mx-auto max-w-6xl animate-fade-in">{children}</div>
         </main>
       </div>
+    </div>
+  )
+}
+
+function SyncBadge({ status }) {
+  const detail = status === 'syncing'
+    ? { label: 'Syncing', icon: Loader2, color: 'text-sky-600', spin: true }
+    : status === 'synced'
+      ? { label: 'Synced', icon: CheckCircle2, color: 'text-emerald-600' }
+      : status === 'failed'
+        ? { label: 'Sync failed', icon: AlertTriangle, color: 'text-rose-600' }
+        : { label: 'Offline', icon: WifiOff, color: 'text-amber-600' }
+  const Icon = detail.icon
+  return (
+    <div className={`mx-3 mb-2 flex items-center gap-2 px-3 text-xs ${detail.color}`} role="status">
+      <Icon className={`h-3.5 w-3.5 ${detail.spin ? 'animate-spin' : ''}`} />
+      <span>{detail.label}</span>
     </div>
   )
 }

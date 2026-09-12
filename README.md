@@ -8,8 +8,9 @@ Developed by **Jeevan Varghese** · [https://itsjeevanvarghese.web.app](https://
 
 ## Features
 
-- **Two separate modes** — Online (Firebase) and Offline (this device only). Data never crosses between them automatically.
-- **Login only** — no signup button. Each Firebase user sees only their own data under `users/{uid}/...`.
+- **Two profiles** — authorized online profiles use Firestore with persistent offline caching; the optional device-only Dexie profile remains separate.
+- **Complete authentication** — Google, email/password sign-in and sign-up, email verification when required, password reset, and Access Manager approval requests.
+- **Canonical authorization** — online data requires an active `accessUsers/{uid}` record with this Firebase Web App ID enabled; Firestore rules enforce the same permission.
 - **Classes** — create, rename, delete (with cascade), select active, set a device-local default class.
 - **Students** — roll number + name per class, natural sort, search, move between classes (with conflict checks), CSV import/export/blank template, duplicate validation.
 - **Today's Absentees** — circular roll-number buttons, draft-only selection, "Send to WhatsApp" that saves first and only opens WhatsApp after the save confirms.
@@ -30,7 +31,7 @@ Developed by **Jeevan Varghese** · [https://itsjeevanvarghese.web.app](https://
 | Build tool | Vite 5 |
 | Language | JavaScript (JSX) |
 | Online auth + database | Firebase Authentication + Cloud Firestore |
-| Offline storage | IndexedDB via Dexie |
+| Offline storage | Firestore persistent IndexedDB cache + Dexie device-only profile |
 | PDF generation | jsPDF |
 | Icons | lucide-react |
 | Styling | Tailwind CSS |
@@ -61,8 +62,8 @@ The output is written to `dist/`.
 
 1. Create a Firebase project at [https://console.firebase.google.com](https://console.firebase.google.com).
 2. Add a **Web app** to the project and copy the config values.
-3. Enable **Authentication → Sign-in method → Email/Password**.
-4. Create one or more user accounts (the app has no signup button — create users in the Firebase console).
+3. Enable **Authentication → Sign-in method → Email/Password** and **Google**.
+4. Register the app in the shared Firebase Access Manager. Account creation never grants application access.
 5. Copy `.env.example` to `.env` and fill in the values:
 
 ```env
@@ -95,19 +96,22 @@ firebase deploy --only hosting
 
 ## Firestore Security Rules
 
-The rules in `firestore.rules` ensure each authenticated user can only read and write documents under their own UID:
+The rules in `firestore.rules` require the same canonical Access Manager permission used by the client:
 
 ```
-users/{uid}/classes/{classId}
-users/{uid}/students/{studentId}
-users/{uid}/attendance/{attendanceId}
-users/{uid}/holidays/{holidayId}
-users/{uid}/holidayOverrides/{overrideId}
-users/{uid}/settings/app
-users/{uid}/metadata/profile
+accessUsers/{uid}.active == true
+accessUsers/{uid}.apps[firebaseAppId] == true
+appRegistry/{firebaseAppId}.active == true
+
+attendanceManagerUsers/{uid}/classes/{classId}
+attendanceManagerUsers/{uid}/students/{studentId}
+attendanceManagerUsers/{uid}/attendance/{attendanceId}
+attendanceManagerUsers/{uid}/holidays/{holidayId}
+attendanceManagerUsers/{uid}/holidayOverrides/{overrideId}
+attendanceManagerUsers/{uid}/settings/app
 ```
 
-All other access is denied.
+Access Manager records remain server-only. Shared-project rules for other applications are preserved.
 
 ---
 
@@ -121,7 +125,7 @@ src/
   pages/         StartPage, ClassesPage, StudentsPage, TodayAbsencesPage,
                  HolidayManagerPage, AttendanceReportPage, SettingsPage
   services/
-    firebase/    config.js, auth.js
+    firebase/    config.js, auth.js, access.js, sync.js
     firestore/   onlineRepo.js
     indexeddb/   database.js, offlineRepo.js
     backup/      backup.js
@@ -151,7 +155,9 @@ Database name: `attendance-manager`
 
 > **Primary keys are never changed after release.** Schema evolution only adds stores/indexes by incrementing the Dexie version number. The database is never deleted as a recovery mechanism.
 
-The default-class and theme preferences are stored device-locally (IndexedDB `settings` store + `localStorage`) and are intentionally never synced to the cloud or included in backups.
+The default-class, theme, and last successful per-UID authorization marker are stored device-locally. No passwords or Firebase credentials are stored in IndexedDB. The authorization marker is accepted only while offline; reconnecting revalidates Access Manager permission before Firestore networking and queued-write sync are enabled.
+
+Authorized online profiles use Firestore's persistent IndexedDB cache. Writes made while disconnected are queued with stable document IDs, survive browser restarts, and sync after authorization is revalidated. Firestore resolves same-document conflicts with its last-write-wins behavior; merge writes avoid replacing unrelated fields. A service worker caches only the same-origin app shell and static assets, never Firebase API responses.
 
 ---
 
