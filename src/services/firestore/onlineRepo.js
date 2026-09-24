@@ -1,25 +1,24 @@
 // Firestore repository — the online persistence layer.
-// All data is scoped under attendanceManagerUsers/{uid}/.... Online writes are
+// All data is scoped under apps/attendanceManagerWithWaSender/users/{uid}/.... Online writes are
 // awaited; offline writes are queued in Firestore's persistent IndexedDB cache.
 // We never trust a stored UID — it always comes from the authenticated user.
 // Batches are used for atomic multi-record writes (replace/restore).
 
 import {
-  collection, doc, getDocs, getDocsFromCache, setDoc, writeBatch,
+  getDocs, getDocsFromCache, setDoc, writeBatch,
   query, where,
 } from 'firebase/firestore'
 import { db, isFirestoreNetworkEnabled } from '@/services/firebase/config'
 import { trackFirestoreWrite } from '@/services/firebase/sync'
 import { uid as genId } from '@/utils/ids'
 import { logError } from '@/utils/logger'
-
-const ROOT = (uid) => `attendanceManagerUsers/${uid}`
+import { userCollection, userDocument, userRootPath } from '@/services/firebase/paths'
 
 function colRef(uid, name) {
-  return collection(db, `${ROOT(uid)}/${name}`)
+  return userCollection(uid, name)
 }
 function docRef(uid, name, id) {
-  return doc(db, `${ROOT(uid)}/${name}`, id)
+  return userDocument(uid, name, id)
 }
 
 // Strip undefined fields (Firestore rejects them).
@@ -32,7 +31,7 @@ function clean(o) {
 }
 
 async function list(uid, name) {
-  console.debug('[Attendance Data] Opening protected Firestore path.', { uid, path: `${ROOT(uid)}/${name}` })
+  console.debug('[Attendance Data] Opening protected Firestore path.', { uid, path: `${userRootPath(uid)}/${name}` })
   const snap = await readDocs(colRef(uid, name))
   return snap.docs.map(d => ({ id: d.id, ...d.data() }))
 }

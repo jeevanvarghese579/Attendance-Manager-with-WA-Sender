@@ -7,6 +7,7 @@ import { uid as genId } from '@/utils/ids'
 import { validateBackup, detectMergeConflicts } from '@/validation/backup'
 import { downloadText } from '@/utils/csv'
 import { logInfo } from '@/utils/logger'
+import { APP_KEY } from '@/services/firebase/paths'
 
 export const APP_VERSION = '4.0.0'
 export const BACKUP_FORMAT_VERSION = 1
@@ -28,6 +29,7 @@ export async function createMasterBackup() {
   const data = await collectBackupData()
   const { mode } = getMode()
   const backup = {
+    appKey: APP_KEY,
     app: 'attendance-manager-for-schools',
     formatVersion: BACKUP_FORMAT_VERSION,
     schemaVersion: SCHEMA_VERSION,

@@ -1,6 +1,7 @@
 // Validation for backup JSON (treated as untrusted) and student CSV imports.
 
 import { normalizeRoll } from '@/utils/sort'
+import { APP_KEY } from '@/services/firebase/paths'
 
 export function isNonEmptyString(v) {
   return typeof v === 'string' && v.trim() !== ''
@@ -23,6 +24,7 @@ export function validateBackup(raw) {
   const errors = []
   if (!raw || typeof raw !== 'object') return { ok: false, errors: ['Backup is not a valid object.'], backup: null }
   if (raw.app !== 'attendance-manager-for-schools') errors.push('This is not an Attendance Manager backup file.')
+  if (raw.appKey !== undefined && raw.appKey !== APP_KEY) errors.push('This backup belongs to a different application.')
   if (typeof raw.formatVersion !== 'number') errors.push('Missing backup format version.')
   if (!raw.data || typeof raw.data !== 'object') { errors.push('Missing data section.'); return { ok: false, errors, backup: null } }
 
