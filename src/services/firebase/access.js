@@ -38,7 +38,7 @@ export async function checkCurrentUserAccess(user) {
     accountActive: access.canonicalAccessDocument?.active === true,
     permission: access.resolvedPermission,
     canonicalAccessDocument: access.canonicalAccessDocument,
-    protectedPath: `attendanceManagerUsers/${user.uid}`,
+    protectedPath: `apps/attendanceManagerWithWaSender/users/${user.uid}`,
   })
   return access
 }

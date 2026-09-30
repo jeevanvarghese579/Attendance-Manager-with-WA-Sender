@@ -1,5 +1,5 @@
 // Firestore repository — the online persistence layer.
-// All data is scoped under attendanceManagerUsers/{uid}/.... Online writes are
+// All data is scoped under apps/attendanceManagerWithWaSender/users/{uid}/.... Online writes are
 // awaited; offline writes are queued in Firestore's persistent IndexedDB cache.
 // We never trust a stored UID — it always comes from the authenticated user.
 // Batches are used for atomic multi-record writes (replace/restore).
@@ -13,7 +13,8 @@ import { trackFirestoreWrite } from '@/services/firebase/sync'
 import { uid as genId } from '@/utils/ids'
 import { logError } from '@/utils/logger'
 
-const ROOT = (uid) => `attendanceManagerUsers/${uid}`
+const APP_KEY = 'attendanceManagerWithWaSender'
+const ROOT = (uid) => `apps/${APP_KEY}/users/${uid}`
 
 function colRef(uid, name) {
   return collection(db, `${ROOT(uid)}/${name}`)
