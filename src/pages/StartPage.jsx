@@ -46,7 +46,9 @@ export default function StartPage() {
     })
   }
 
-  const handleRequest = () => run(async () => {
+  const handleRequest = () => {
+    if (!window.confirm('Send an access request to the administrator?')) return
+    return run(async () => {
     try {
       await requestAccess()
     } catch (error) {
@@ -56,7 +58,8 @@ export default function StartPage() {
       }
       throw error
     }
-  })
+    })
+  }
 
   const handleVerification = () => run(async () => {
     await sendVerification()
@@ -147,6 +150,7 @@ function AccessGate({ user, access, loading, onRequest, onCheck, onVerify, onSig
           <Notice text={message} />
           <p className="text-sm text-slate-500">Signed in as <strong>{user.email}</strong></p>
           {access.kind === 'denied' && !needsVerification && <Button className="w-full" loading={loading} onClick={onRequest}><UserPlus className="h-4 w-4" /> Request Access</Button>}
+          <a className="block text-center text-sm font-medium text-brand-600 hover:underline" href="https://itsjeevanvarghese.web.app/contact" target="_blank" rel="noopener noreferrer">Contact developer</a>
           {access.kind === 'denied' && needsVerification && <Button className="w-full" loading={loading} onClick={onVerify}><Mail className="h-4 w-4" /> Send Verification Email</Button>}
           {['pending', 'rejected', 'inactive', 'denied', 'offline-unavailable', 'error'].includes(access.kind) && <Button variant="secondary" className="w-full" disabled={loading} onClick={onCheck}><RefreshCw className="h-4 w-4" /> Check Again</Button>}
           <Button variant="ghost" className="w-full" disabled={loading} onClick={onSignOut}>Sign Out</Button>
